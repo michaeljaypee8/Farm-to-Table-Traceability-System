@@ -320,3 +320,24 @@
         current-count
     )
 )
+
+(define-private (is-batch-for-product (batch-id uint) (product-id uint))
+  (match (map-get? batches { batch-id: batch-id })
+    batch-data (is-eq (get product-id batch-data) product-id)
+    false
+  )
+)
+
+(define-private (collect-if-matches (batch-id uint) (acc { list: (list 10 uint), product-id: uint }))
+  (let ((current-list (get list acc))
+        (pid (get product-id acc)))
+    (if (is-batch-for-product batch-id pid)
+      { list: (unwrap-panic (as-max-len? (append current-list batch-id) u10)), product-id: pid }
+      { list: current-list, product-id: pid }
+    )
+  )
+)
+
+(define-read-only (get-batches-for-product (product-id uint))
+  (get list (fold collect-if-matches (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) { list: (list), product-id: product-id }))
+)

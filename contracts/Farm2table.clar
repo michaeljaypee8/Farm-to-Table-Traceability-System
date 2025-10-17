@@ -341,3 +341,89 @@
 (define-read-only (get-batches-for-product (product-id uint))
   (get list (fold collect-if-matches (list u1 u2 u3 u4 u5 u6 u7 u8 u9 u10) { list: (list), product-id: product-id }))
 )
+
+(define-constant ERR-QI-NOT-AUTHORIZED (err u200))
+(define-constant ERR-QI-INVALID-RATING (err u201))
+(define-constant ERR-QI-ADMIN-ALREADY-SET (err u202))
+
+(define-data-var qi-admin (optional principal) none)
+(define-map qi-inspectors principal bool)
+(define-map qi-inspections { batch-id: uint, stage: uint, inspector: principal } { rating: uint, timestamp: uint })
+(define-map qi-batch-stats uint { sum: uint, count: uint })
+
+(define-public (qi-set-admin (admin principal))
+    (begin
+        (asserts! (is-eq tx-sender CONTRACT-OWNER) ERR-NOT-AUTHORIZED)
+        (asserts! (is-none (var-get qi-admin)) ERR-QI-ADMIN-ALREADY-SET)
+        (var-set qi-admin (some admin))
+        (ok true)
+    )
+)
+
+(define-public (qi-authorize-inspector (inspector principal) (authorized bool))
+    (let
+        (
+            (admin-address (unwrap! (var-get qi-admin) ERR-QI-NOT-AUTHORIZED))
+        )
+        (asserts! (is-eq tx-sender admin-address) ERR-QI-NOT-AUTHORIZED)
+        (map-set qi-inspectors inspector authorized)
+        (ok authorized)
+    )
+)
+
+(define-read-only (qi-is-inspector (inspector principal))
+    (default-to false (map-get? qi-inspectors inspector))
+)
+
+(define-public (qi-record-inspection (batch-id uint) (stage uint) (rating uint))
+    (let
+        (
+            (inspection-key { batch-id: batch-id, stage: stage, inspector: tx-sender })
+            (existing-inspection (map-get? qi-inspections inspection-key))
+            (current-stats (default-to { sum: u0, count: u0 } (map-get? qi-batch-stats batch-id)))
+            (current-time stacks-block-height)
+        )
+        (asserts! (and (>= rating u1) (<= rating u10)) ERR-QI-INVALID-RATING)
+        (asserts! (qi-is-inspector tx-sender) ERR-QI-NOT-AUTHORIZED)
+        (asserts! (is-some (map-get? batches { batch-id: batch-id })) ERR-INVALID-BATCH)
+        (map-set qi-inspections inspection-key { rating: rating, timestamp: current-time })
+        (match existing-inspection
+            prev-inspection
+                (let
+                    (
+                        (old-rating (get rating prev-inspection))
+                        (new-sum (- (+ (get sum current-stats) rating) old-rating))
+                    )
+                    (map-set qi-batch-stats batch-id { sum: new-sum, count: (get count current-stats) })
+                )
+                (map-set qi-batch-stats batch-id { sum: (+ (get sum current-stats) rating), count: (+ (get count current-stats) u1) })
+        )
+        (ok true)
+    )
+)
+
+(define-read-only (qi-get-inspection (batch-id uint) (stage uint) (inspector principal))
+    (map-get? qi-inspections { batch-id: batch-id, stage: stage, inspector: inspector })
+)
+
+(define-read-only (qi-get-batch-avg-rating (batch-id uint))
+    (match (map-get? qi-batch-stats batch-id)
+        stats
+            (if (> (get count stats) u0)
+                (some (/ (get sum stats) (get count stats)))
+                none
+            )
+        none
+    )
+)
+
+(define-read-only (qi-batch-meets-quality (batch-id uint) (min-rating uint))
+    (match (qi-get-batch-avg-rating batch-id)
+        avg-rating (>= avg-rating min-rating)
+        false
+    )
+)
+
+(define-read-only (qi-get-admin)
+    (var-get qi-admin)
+)
